@@ -2,6 +2,8 @@
 
 > Parsing UD with <3 Matrices
 
+![Embeddings are multiplied with matrix B and L to transform them into a tree structural subspace and label subspace. Node with highest root probability sets directionality of all edges by pointing them away. Edges are labeled according to child embedding label from L.](header.png)
+
 This archive contains implementations of the methods from the ACL 2022 paper "**Probing for Labeled Dependency Trees**" ([Müller-Eberstein, van der Goot and Plank, 2022](https://personads.me/x/acl-2022-paper)).
 
 After installing the required packages, the experiments can be re-run using the provided `run.sh` script. Please update the variables within the script to point to the appropriate directories on your machine.
