@@ -67,6 +67,61 @@ class DepProbe(nn.Module):
 
 		return results
 
+
+class DepProbeMix(DepProbe):
+	def __init__(self, emb_model, dep_dim, dep_rels):
+		super().__init__(emb_model=emb_model, dep_dim=dep_dim, dep_rels=dep_rels)
+		# initialize mixture weights as standard average over layers
+		self._mix_arc = nn.Parameter(torch.ones(len(self._emb._lm_layers)))
+		self._mix_lbl = nn.Parameter(torch.ones(len(self._emb._lm_layers)))
+		self._softmax = nn.Softmax(dim=0)
+
+	def get_trainable_parameters(self):
+		return list(self._arc.parameters()) + list(self._lbl.parameters()) + [self._mix_arc, self._mix_lbl]
+
+	def forward(self, sentences, decode=True):
+		# embed sentences (batch_size, seq_length)
+		# -> ([(batch_size, max_length, emb_dim) * 2], (batch_size, max_length))
+		# -> ([emb_sentences_lay0, emb_sentences_lay1], att_sentences)
+		with torch.no_grad():
+			emb_layers, att_sentences = self._emb(sentences)
+
+		# compute weighted sum over embedding layers
+		emb_sentences_arc = torch.zeros_like(emb_layers[0])
+		emb_sentences_lbl = torch.zeros_like(emb_layers[0])
+		for layer_idx in range(len(emb_layers)):
+			emb_sentences_arc += self._softmax(self._mix_arc)[layer_idx] * emb_layers[layer_idx].detach()
+			emb_sentences_lbl += self._softmax(self._mix_lbl)[layer_idx] * emb_layers[layer_idx].detach()
+
+		# calculate distances in dependency space
+		# dep_embeddings: (batch_size, dep_dim)
+		# distances: (batch_size, max_len, max_len)
+		dep_embeddings, distances = self._arc(emb_sentences_arc)
+
+		# classify dependency relations
+		lbl_logits = self._lbl(emb_sentences_lbl, att_sentences.detach())
+
+		# construct minimal return set
+		results = {
+			'dependency_embeddings': dep_embeddings,
+			'distances': distances,
+			'label_logits': lbl_logits
+		}
+
+		# decode labelled dependency graph
+		if decode:
+			# get roots and labels from logits
+			roots, labels = self._lbl.get_labels(lbl_logits.detach())
+			# construct MST starting at root
+			graphs = self._arc.to_graph(roots.detach(), distances.detach(), att_sentences.detach())
+
+			# add labels and graphs to results
+			results['graphs'] = graphs
+			results['labels'] = labels
+
+		return results
+
+
 #
 # Graph Predictors
 #

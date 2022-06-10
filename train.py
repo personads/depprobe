@@ -7,7 +7,7 @@ from utils.dataset import DepSpaceDataset
 
 
 def parse_arguments():
-	arg_parser = argparse.ArgumentParser(description='Probe Training')
+	arg_parser = argparse.ArgumentParser(description='Universal Dependencies - Embedding Space Parsing')
 	arg_parser.add_argument('ud_path', help='path to Universal Dependencies directory')
 	arg_parser.add_argument('out_path', help='path to output directory')
 	# parser setup
@@ -24,7 +24,7 @@ def parse_arguments():
 		'-ds', '--dependency_size', type=int, default=128,
 		help='dimensionality of dependency space transformation (default: 128)')
 	arg_parser.add_argument(
-		'-pt', '--parser_type', default='depprobe', choices=['structural', 'directed', 'depprobe'],
+		'-pt', '--parser_type', default='depprobe', choices=['structural', 'directed', 'depprobe', 'depprobe-mix'],
 		help='parser type (default: depprobe)')
 	arg_parser.add_argument(
 		'-pd', '--parser_decode', default=False, action='store_true',
@@ -33,11 +33,14 @@ def parse_arguments():
 	arg_parser.add_argument(
 		'-s', '--split', help='path to data split definition pickle (default: None - full UD)')
 	arg_parser.add_argument(
+		'-td', '--treebank_directory', default=False, action='store_true',
+		help='set flag to load single treebank from directory instead of mix of treebanks from split (default: False)')
+	arg_parser.add_argument(
 		'-e', '--epochs', type=int, default=100, help='maximum number of epochs (default: 100)')
 	arg_parser.add_argument(
-		'-es', '--early_stop', type=int, default=5, help='maximum number of epochs without improvement (default: 5)')
+		'-es', '--early_stop', type=int, default=5, help='maximum number of epochs without improvement (default: 5, -1 to disable)')
 	arg_parser.add_argument(
-		'-bs', '--batch_size', type=int, default=64, help='maximum number of sentences per batch (default: 64)')
+		'-bs', '--batch_size', type=int, default=32, help='maximum number of sentences per batch (default: 64)')
 	arg_parser.add_argument(
 		'-lr', '--learning_rate', type=float, default=1e-3, help='learning rate (default: 1e-3)')
 	arg_parser.add_argument(
@@ -60,9 +63,15 @@ def main():
 	transformers.set_seed(args.seed)
 
 	# setup UD data
-	ud, splits, rel_map = setup_data(args.ud_path, args.split)
+	ud, splits, rel_map = setup_data(args.ud_path, args.split, args.treebank_directory)
 	train_data = DepSpaceDataset(ud, rel_map, splits['train'], args.batch_size)
-	eval_data = DepSpaceDataset(ud, rel_map, splits['dev'], args.batch_size)
+	logging.info(f"Loaded training split with {len(train_data)} sentences.")
+	# load dev split if early stopping is enabled
+	if args.early_stop < 0:
+		logging.info("Early stopping disabled. Not loading dev data.")
+	else:
+		eval_data = DepSpaceDataset(ud, rel_map, splits['dev'], args.batch_size)
+		logging.info(f"Loaded dev split with {len(eval_data)} sentences.")
 
 	# setup parser model
 	parser = setup_model(
@@ -94,6 +103,15 @@ def main():
 		# store and print statistics
 		statistics('train', stats, cur_stats, ep_idx, args.epochs)
 
+		# save most recent model
+		path = os.path.join(args.out_path, 'newest.tar')
+		save_checkpoint(parser, optimizer, ep_idx, stats, path)
+		logging.info(f"Saved model from epoch {ep_idx + 1} to '{path}'.")
+
+		# continue to next epoch if early stopping is disabled
+		if args.early_stop < 0:
+			continue
+
 		# iterate over batches in dev split
 		cur_stats = run(
 			parser, criterion, None,
@@ -104,11 +122,6 @@ def main():
 		# store and print statistics
 		statistics('eval', stats, cur_stats, ep_idx, args.epochs)
 		cur_eval_loss = stats['eval/loss'][-1]
-
-		# save most recent model
-		path = os.path.join(args.out_path, 'newest.tar')
-		save_checkpoint(parser, optimizer, ep_idx, stats, path)
-		logging.info(f"Saved model from epoch {ep_idx + 1} to '{path}'.")
 
 		# save best model
 		if cur_eval_loss <= min(stats['eval/loss']):

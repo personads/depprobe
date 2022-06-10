@@ -13,7 +13,7 @@ class EmbeddingModel(nn.Module):
 	def __init__(self, lm_name, layers, cache=None):
 		super(EmbeddingModel, self).__init__()
 		# load transformer
-		self._tok = transformers.AutoTokenizer.from_pretrained(lm_name, use_fast=True)
+		self._tok = transformers.AutoTokenizer.from_pretrained(lm_name, use_fast=True, add_prefix_space=True)
 		self._lm = transformers.AutoModel.from_pretrained(lm_name, return_dict=True)
 		# load cache
 		self._cache = cache  # {hash: torch.tensor (num_layers, sen_len, emb_dim)}
@@ -151,6 +151,10 @@ class EmbeddingModel(nn.Module):
 					emb_word += emb_pieces[sidx, tidx]
 					num_tokens += 1
 					coverage = token_span[1]
+
+					# exit prematurely if next piece initiates new word (some LMs return less characters than in input)
+					if (tidx < len(offsets) - 1) and offsets[tidx + 1][0] == 0:
+						break
 
 				# add mean of aggregate WordPiece embeddings and set attention to True
 				emb_words[sidx, widx] = emb_word / num_tokens

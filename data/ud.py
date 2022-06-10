@@ -356,6 +356,12 @@ class UniversalDependenciesSentence:
 		]
 		return heads, labels
 
+	def get_pos(self):
+		pos = [
+			w.upostag for token in self._tokens for w in token.to_words()
+		]
+		return pos
+
 	def get_comments(self, stripped=True):
 		return [c[1:].strip() for c in self._comments]
 

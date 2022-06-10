@@ -37,7 +37,7 @@ def setup_logging(log_path):
 	logger.addHandler(logging.StreamHandler(sys.stdout))
 
 
-def setup_data(ud_path, split_path, skip_root_label=False):
+def setup_data(ud_path, split_path, is_treebank, skip_root_label=False):
 	# load data split definition (if supplied)
 	ud_filter = None
 	splits = None
@@ -49,8 +49,33 @@ def setup_data(ud_path, split_path, skip_root_label=False):
 		ud_filter = UniversalDependenciesIndexFilter(relevant_idcs)
 		logging.info(f"Loaded data splits {', '.join([f'{s}: {len(idcs)}' for s, idcs in splits.items()])} with filter {ud_filter}.")
 
-	# load Universal Dependencies
-	ud = UniversalDependencies.from_directory(ud_path, ud_filter=ud_filter, verbose=True)
+	# load single Universal Dependencies treebank
+	if is_treebank:
+		treebanks = []
+		splits = {}
+		cursor = 0
+		# iterate over files in TB directory
+		for tbf in sorted(os.listdir(ud_path)):
+			# skip non-conllu files
+			if os.path.splitext(tbf)[1] != '.conllu': continue
+
+			# load treebank
+			tbf_path = os.path.join(ud_path, tbf)
+			treebank = UniversalDependenciesTreebank.from_conllu(tbf_path, name=tbf, start_idx=cursor)
+			treebanks.append(treebank)
+
+			# identify split
+			split = os.path.splitext(tbf)[0].split('-')[-1]
+			splits[split] = list(range(cursor, cursor + len(treebank)))
+			cursor += len(treebank)
+			logging.info(f"Loaded {treebank} ({split}) from '{tbf}'.")
+		# construct UD instance from relevant treebanks
+		ud = UniversalDependencies(treebanks=treebanks)
+		logging.info(f"Constructed UD corpus from treebank '{ud_path}'.")
+
+	# load full Universal Dependencies
+	else:
+		ud = UniversalDependencies.from_directory(ud_path, ud_filter=ud_filter, verbose=True)
 	# load UD dependency relations and map to indices
 	rel_map = {r: i for i, r in enumerate(UD_RELATION_TYPES)}
 	# set 'root' to -1 such that it's skipped (only for separate root prediction)
@@ -92,10 +117,17 @@ def setup_model(lm_name, dep_dim, parser_type='depprobe', state_dict=None, emb_l
 			emb_model=emb_model,
 			dep_dim=dep_dim
 		)
-	# build operational parser
+	# build dependency probe
 	elif parser_type == 'depprobe':
 		assert len(emb_layers) == 2, f"[Error] DepProbe requires two embedding layers, received {len(emb_layers)}."
 		parser = DepProbe(
+			emb_model=emb_model,
+			dep_dim=dep_dim,
+			dep_rels=UD_RELATION_TYPES
+		)
+	# build dependency probe over mixture of layers
+	elif parser_type == 'depprobe-mix':
+		parser = DepProbeMix(
 			emb_model=emb_model,
 			dep_dim=dep_dim,
 			dep_rels=UD_RELATION_TYPES
@@ -108,7 +140,9 @@ def setup_model(lm_name, dep_dim, parser_type='depprobe', state_dict=None, emb_l
 
 	# load existing state if provided
 	if state_dict is not None:
-		parser.load_state_dict(state_dict)
+		keys = parser.load_state_dict(state_dict, strict=False)
+		assert len([k for k in keys.missing_keys if not k.startswith('_emb.')]) == 0, \
+			f"[Error] State dict is missing keys ({keys.missing_keys})."
 		logging.info(f"Loaded weights from predefined state dict.")
 
 	# check CUDA availability
@@ -133,7 +167,7 @@ def setup_criterion(parser_type='depprobe'):
 			f"Using {criterion.__class__.__name__} with "
 			f"{criterion._depth_loss.__class__.__name__} and {criterion._distance_loss.__class__.__name__}.")
 	# use depprobe loss
-	else parser_type == 'depprobe':
+	else parser_type.startswith('depprobe'):
 		criterion = RootedDependencyLoss()
 		logging.info(
 			f"Using {criterion.__class__.__name__} with "
@@ -277,10 +311,16 @@ def statistics(mode, stats, epoch_stats, ep_idx, epochs):
 
 
 def save_checkpoint(parser, optimizer, epoch, stats, path):
+	# remove embedding model parameters
+	parser_state = OrderedDict()
+	for param, value in parser.state_dict().items():
+		if param.startswith('_emb.'): continue
+		parser_state[param] = value
+
 	torch.save({
 		'epoch': epoch,
 		'stats': stats,
-		'parser_state': parser.state_dict(),
+		'parser_state': parser_state,
 		'optimizer': optimizer.state_dict()
 	}, path)
 	logging.info(f"Saved checkpoint to '{path}'.")
