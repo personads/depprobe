@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 #
@@ -212,7 +213,8 @@ class LabelClassifier(nn.Module):
 
 	def get_labels(self, lbl_logits):
 		# gather word with highest root probability for each sentence
-		roots = torch.argmax(lbl_logits[:, :, self._root_label], dim=-1)  # (batch_size, 1)
+		lbl_logsoftmax = F.log_softmax(lbl_logits, dim=-1).nan_to_num(nan=-float('inf'))
+		roots = torch.argmax(lbl_logsoftmax[:, :, self._root_label], dim=-1)  # (batch_size, 1)
 		# set root logits to -inf to prevent multiple roots
 		lbl_logits_noroot = lbl_logits.detach().clone()
 		lbl_logits_noroot[:, :, self._root_label] = torch.ones(
