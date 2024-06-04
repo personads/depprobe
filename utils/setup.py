@@ -6,13 +6,13 @@ import transformers
 
 # local imports
 from data.ud import *
-from data.utils import *
 
 from models.embedding import *
 from models.probing import *
 from models.depprobe import *
 from models.loss import *
 
+from collections import defaultdict
 
 def setup_output_directory(out_path):
 	if os.path.exists(out_path):
@@ -167,7 +167,7 @@ def setup_criterion(parser_type='depprobe'):
 			f"Using {criterion.__class__.__name__} with "
 			f"{criterion._depth_loss.__class__.__name__} and {criterion._distance_loss.__class__.__name__}.")
 	# use depprobe loss
-	else parser_type.startswith('depprobe'):
+	elif parser_type.startswith('depprobe'):
 		criterion = RootedDependencyLoss()
 		logging.info(
 			f"Using {criterion.__class__.__name__} with "

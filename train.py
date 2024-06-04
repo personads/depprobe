@@ -5,6 +5,7 @@ import argparse, logging, os, sys, time
 from utils.setup import *
 from utils.dataset import DepSpaceDataset
 
+from collections import defaultdict
 
 def parse_arguments():
 	arg_parser = argparse.ArgumentParser(description='Universal Dependencies - Embedding Space Parsing')
